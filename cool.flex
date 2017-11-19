@@ -139,4 +139,91 @@ f[aA][lL][sS][eE]                   {
                         cool_yylval.symbol = inttable.add_string(yytext);
                         return INT_CONST;
                     }
+    /*
+      *  String constants (C syntax)
+      *  Escape sequence \c is accepted for all characters c. Except for
+      *  \n \t \b \f, the result is c.
+      *
+      */
+
+\"                  {
+                        string_buf_ptr = string_buf;
+                        BEGIN(STRING);
+                    }
+<STRING>{
+    \"              {
+                        *string_buf_ptr = '\0';
+                        BEGIN(INITIAL);
+                        cool_yylval.symbol = stringtable.add_string(string_buf);
+                        return STR_CONST;
+                    }
+    \\?\0           {
+                        BEGIN(INVALID_STRING);
+                        RETURN_ERROR("String contains null character");
+                    }
+    \n              {
+                        ++curr_lineno;
+                        BEGIN(INITIAL);
+                        RETURN_ERROR("Unterminated string constant");
+                    }
+    <<EOF>>         {
+                        BEGIN(INITIAL);     /* Prevent EOF loop */
+                        RETURN_ERROR("EOF in string constant");
+                    }
+    \\b             EXTEND_STR('\b');       /* backspace */
+    \\f             EXTEND_STR('\f');       /* formfeed */
+    \\t             EXTEND_STR('\t');       /* tab */
+    \\n             EXTEND_STR('\n');       /* newline */
+    \\\n            {                       /* escaped newline */
+                        ++curr_lineno;
+                        EXTEND_STR('\n');
+                    }
+    \\.             EXTEND_STR(yytext[1]);
+    [^\\\n\0\"]+    {
+                        if (string_buf_ptr + yyleng >
+                                &string_buf[MAX_STR_CONST - 1]) {
+                            BEGIN(INVALID_STRING);
+                            RETURN_ERROR("String constant too long");
+                        }
+                        strcpy(string_buf_ptr, yytext);
+                        string_buf_ptr += yyleng;
+                    }
+}
+<INVALID_STRING>{
+    \"          BEGIN(INITIAL);
+    \n          {
+                    ++curr_lineno;
+                    BEGIN(INITIAL);
+                }
+    \\\n        ++curr_lineno;
+    \\.         ;
+    [^\\\n\"]+  ;
+}
+    /* Comments */
+"--".*                  ;
+"*)"                    RETURN_ERROR("Unmatched *)");
+<INITIAL,COMMENT>"(*"   {
+                            BEGIN(COMMENT);
+                            ++comment_level;
+                        }
+<COMMENT>{
+    "*"+")"             {
+                            if (--comment_level < 1)
+                                BEGIN(INITIAL);
+                        }
+    <<EOF>>             {
+                            BEGIN(INITIAL);         /* Prevent EOF loop */
+                            RETURN_ERROR("EOF in comment");
+                        }
+    \\\n                ++curr_lineno;
+    \\.                 ;
+    [^(*\\\n]*          ;
+    "("+[^(*\\\n]*      ; 
+    "*"+[^)*\\\n]*      ;
+    \n                  ++curr_lineno;
+}
+    /* Whitespace and leftovers */
+[\t\v\f\r ]+    ;
+\n+             curr_lineno += yyleng;
+.               RETURN_ERROR(yytext);
 %%
